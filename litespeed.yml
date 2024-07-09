@@ -1,0 +1,238 @@
+- name: Manage LiteSpeed Web Server on Localhost
+  hosts: webservers
+  become: yes
+  vars:
+    site:
+      name: localhost
+      domain: localhost
+      doc_root: /usr/local/lsws/localhost/web
+      content_src: /mnt/c/Users/khaled/OneDrive/Desktop/Softylus/ols-docker-env/sites/localhost
+    mysql:
+      DATABASE_URL: 'mysql://mariadb:57KeyHV3TWZ9sUTYZufGBYnHHC2kPtSF4unLYn27T73udiyix0qf57Hk8CfUoqB4@135.181.200.123:5432/default'
+      DB_host: "135.181.200.123"
+      root_password: "HJ6Xn7btw0xL64Mrf1olwXm81nrrQukmLD9QjIokTXAd1583iSPgh5JYPegsPGFw"
+      database: "default"
+      user: "mariadb"
+      password: "57KeyHV3TWZ9sUTYZufGBYnHHC2kPtSF4unLYn27T73udiyix0qf57Hk8CfUoqB4"
+    lsws_dir: /usr/local/lsws
+    owasp_dir: "{{ lsws_dir }}/conf/owasp"
+    owasp_version: "4.3.0"
+  tasks:
+    - name: Ensure apt cache is up to date
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Ensure LiteSpeed and required packages are installed
+      ansible.builtin.apt:
+        name:
+          - openlitespeed
+          - unzip
+          - mysql-server
+          - git
+        state: present
+
+    - name: Install pip for Python 3
+      ansible.builtin.apt:
+        name: python3-pip
+        state: present
+
+    - name: Install PyMySQL module
+      ansible.builtin.pip:
+        name: PyMySQL
+        state: present
+
+    - name: Ensure LiteSpeed is started and enabled
+      ansible.builtin.service:
+        name: lsws
+        state: started
+        enabled: yes
+
+    - name: Ensure PHP 8.2 and extensions are installed
+      ansible.builtin.apt:
+        name:
+          - lsphp82
+          - lsphp82-common
+          - lsphp82-mysql
+          - lsphp82-curl
+          - lsphp82-imap
+          - lsphp82-intl
+          - lsphp82-opcache
+        state: present
+
+    - name: Ensure PHP 8.2 is set as the default
+      ansible.builtin.shell: |
+        ln -sf /usr/local/lsws/lsphp82/bin/php /usr/bin/php
+
+    - name: Mark the directory as safe for Git
+      ansible.builtin.shell: |
+        git config --global --add safe.directory /usr/local/lsws/localhost
+      become: true
+
+    - name: Clone Bedrock repository with force
+      ansible.builtin.git:
+        repo: 'https://github.com/roots/bedrock.git'
+        dest: "{{ site.doc_root }}"
+        version: master
+        force: true
+      become: true
+
+    - name: Copy .env.example to .env
+      ansible.builtin.copy:
+        src: "{{ site.doc_root }}/.env.example"
+        dest: "{{ site.doc_root }}/.env"
+        remote_src: yes
+      become: true
+
+    - name: Update Bedrock .env file
+      ansible.builtin.lineinfile:
+        path: "{{ site.doc_root }}/.env"
+        regexp: '^DB_NAME=.*'
+        line: "DB_NAME='{{ mysql.database }}'"
+      notify: restart litespeed
+
+    - name: Update Bedrock .env file
+      ansible.builtin.lineinfile:
+        path: "{{ site.doc_root }}/.env"
+        regexp: '^DB_USER=.*'
+        line: "DB_USER='{{ mysql.user }}'"
+      notify: restart litespeed
+
+    - name: Update Bedrock .env file
+      ansible.builtin.lineinfile:
+        path: "{{ site.doc_root }}/.env"
+        regexp: '^DB_PASSWORD=.*'
+        line: "DB_PASSWORD='{{ mysql.password }}'"
+      notify: restart litespeed
+
+    - name: Update Bedrock .env file
+      ansible.builtin.lineinfile:
+        path: "{{ site.doc_root }}/.env"
+        regexp: '^WP_HOME=.*'
+        line: "WP_HOME='http://localhost'"
+      notify: restart litespeed
+
+    - name: Update Bedrock .env file
+      ansible.builtin.lineinfile:
+        path: "{{ site.doc_root }}/.env"
+        regexp: '^DB_HOST=.*'
+        line: "DB_HOST='{{ mysql.DB_host }}'"
+      notify: restart litespeed
+
+    - name: Update Bedrock .env file
+      ansible.builtin.lineinfile:
+        path: "{{ site.doc_root }}/.env"
+        regexp: '^DATABASE_URL=.*'
+        line: "DATABASE_URL='{{ mysql.DATABASE_URL }}'"
+      notify: restart litespeed
+
+    - name: Install Composer
+      ansible.builtin.shell: |
+        curl -sS https://getcomposer.org/installer | php
+        mv composer.phar /usr/local/bin/composer
+
+    - name: Install Bedrock dependencies with Composer
+      ansible.builtin.shell: |
+        composer install
+      args:
+        chdir: "{{ site.doc_root }}"
+
+    - name: Ensure LiteSpeed listens on port 80 and configure virtual host
+      ansible.builtin.blockinfile:
+        path: "{{ lsws_dir }}/conf/httpd_config.conf"
+        block: |
+          listener Default {
+            address                 *:80
+            secure                  0
+            map                     localhost *
+          }
+          # END ANSIBLE MANAGED BLOCK
+
+          virtualHost localhost{
+              vhRoot                   /usr/local/lsws/localhost/web/
+              allowSymbolLink          1
+              enableScript             1
+              restrained               1
+              maxKeepAliveReq
+              smartKeepAlive
+              setUIDMode               0
+              chrootMode               0
+              configFile               conf/vhosts/localhost/vhconf.conf
+          }
+
+    # - name: Ensure MySQL is started
+    #   ansible.builtin.service:
+    #     name: mysql
+    #     state: started
+    #     enabled: yes
+
+    # - name: Create MySQL configuration file for root
+    #   ansible.builtin.copy:
+    #     dest: /root/.my.cnf
+    #     content: |
+    #       [client]
+    #       user=root
+    #       password={{ mysql.root_password }}
+    #     mode: '0600'
+    #   when: mysql.root_password is defined
+
+    # - name: Create MySQL database
+    #   community.mysql.mysql_db:
+    #     name: "{{ mysql.database }}"
+    #     state: present
+    #     login_user: root
+    #     login_password: "{{ mysql.root_password }}"
+
+    # - name: Create MySQL user
+    #   community.mysql.mysql_user:
+    #     name: "{{ mysql.user }}"
+    #     password: "{{ mysql.password }}"
+    #     priv: "{{ mysql.database }}.*:ALL"
+    #     state: present
+    #     login_user: root
+    #     login_password: "{{ mysql.root_password }}"
+
+    - name: Set up OWASP ModSecurity rules
+      block:
+        - name: Create OWASP directory
+          ansible.builtin.file:
+            path: "{{ owasp_dir }}"
+            state: directory
+
+        - name: Download OWASP rules
+          ansible.builtin.get_url:
+            url: "https://github.com/coreruleset/coreruleset/archive/refs/tags/v{{ owasp_version }}.zip"
+            dest: "{{ owasp_dir }}/owasp.zip"
+
+        - name: Unzip OWASP rules
+          ansible.builtin.unarchive:
+            src: "{{ owasp_dir }}/owasp.zip"
+            dest: "{{ owasp_dir }}"
+            remote_src: yes
+
+        - name: Configure OWASP rules
+          ansible.builtin.template:
+            src: modsec_includes.conf.j2
+            dest: "{{ owasp_dir }}/modsec_includes.conf"
+
+        - name: Enable ModSecurity in LiteSpeed
+          ansible.builtin.lineinfile:
+            path: "{{ lsws_dir }}/conf/httpd_config.conf"
+            line: "module mod_security { modsecurity on modsecurity_rules `SecRuleEngine On` modsecurity_rules_file {{ owasp_dir }}/modsec_includes.conf }"
+            insertafter: "^module cache"
+
+    - name: Set up cron job for SSL renewal
+      ansible.builtin.cron:
+        name: "Renew Let's Encrypt SSL certificates"
+        job: "{{ lsws_dir }}/admin/misc/letsencrypt.sh {{ site.domain }} --renew"
+        special_time: daily
+
+    - name: Restart LiteSpeed
+      ansible.builtin.service:
+        name: lsws
+        state: restarted
+
+  handlers:
+    - name: restart litespeed
+      ansible.builtin.service:
+        name: lsws
+        state: restarted

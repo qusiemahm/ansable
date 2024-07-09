@@ -1,0 +1,23 @@
+# Basic configuration
+SecRuleEngine On
+SecRequestBodyAccess On
+SecResponseBodyAccess Off
+SecResponseBodyMimeType text/plain text/html text/xml
+SecDataDir /tmp/
+SecTmpDir /tmp/
+SecDebugLog /var/log/modsec_debug.log
+SecDebugLogLevel 0
+SecAuditEngine RelevantOnly
+SecAuditLog /var/log/modsec_audit.log
+SecAuditLogRelevantStatus "^(?:5|4(?!04))"
+
+# Default action set
+SecDefaultAction "phase:2,deny,log,status:403"
+
+# OWASP CRS rules
+Include {{ owasp_dir }}/coreruleset-{{ owasp_version }}/crs-setup.conf
+Include {{ owasp_dir }}/coreruleset-{{ owasp_version }}/rules/*.conf
+
+# Exceptions
+SecRule REQUEST_FILENAME "@contains wp-admin" "id:1000,phase:1,pass,nolog,ctl:ruleEngine=Off"
+SecRule REQUEST_FILENAME "@contains wp-login.php" "id:1001,phase:1,pass,nolog,ctl:ruleEngine=Off"

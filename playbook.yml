@@ -1,0 +1,29 @@
+- name: Manage LiteSpeed Web Server on Localhost
+  hosts: webservers
+  become: yes
+  vars_files:
+    - .env
+
+  tasks:
+    - name: Set individual environment variables as facts
+      set_fact:
+        site_name: "{{ SITE_NAME }}"
+        site_domain: "{{ SITE_DOMAIN }}"
+        site_doc_root: "{{ SITE_DOC_ROOT }}"
+        content_src: "{{ CONTENT_SRC }}"
+        database_url: "{{ DATABASE_URL }}"
+        db_host: "{{ DB_HOST }}"
+        db_port: "{{ DB_PORT }}"
+        root_password: "{{ ROOT_PASSWORD }}"
+        database: "{{ DATABASE }}"
+        db_user: "{{ DB_USER }}"
+        db_password: "{{ DB_PASSWORD }}"
+        lsws_dir: "{{ LSWS_DIR }}"
+        owasp_dir: "{{ OWASP_DIR }}"
+        owasp_version: "{{ OWASP_VERSION }}"
+
+    - import_tasks: bin/common.yml
+    - import_tasks: bin/litespeed.yml
+    - import_tasks: bin/wordpress.yml
+    - import_tasks: bin/owasp.yml
+    - import_tasks: bin/mysql.yml

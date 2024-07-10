@@ -1,0 +1,2 @@
+# ModSecurity Core Rules Set configuration file
+Include {{ lookup('env', 'OWASP_DIR') }}/coreruleset-{{ lookup('env', 'OWASP_VERSION') }}/rules/*.conf

@@ -1,0 +1,10 @@
+- name: Ensure MySQL server is installed
+  ansible.builtin.apt:
+    name: mysql-server
+    state: present
+
+- name: Set up cron job for SSL renewal
+  ansible.builtin.cron:
+    name: "Renew Let's Encrypt SSL certificates"
+    job: "{{ lookup('env', 'LSWS_DIR') }}/admin/misc/letsencrypt.sh {{ lookup('env', 'SITE_DOMAIN') }} --renew"
+    special_time: daily

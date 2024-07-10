@@ -1,0 +1,27 @@
+- name: Create OWASP directory
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'OWASP_DIR') }}"
+    state: directory
+
+- name: Download OWASP rules
+  ansible.builtin.get_url:
+    url: "https://github.com/coreruleset/coreruleset/archive/refs/tags/v{{ lookup('env', 'OWASP_VERSION') }}.zip"
+    dest: "{{ lookup('env', 'OWASP_DIR') }}/owasp.zip"
+
+- name: Unzip OWASP rules
+  ansible.builtin.unarchive:
+    src: "{{ lookup('env', 'OWASP_DIR') }}/owasp.zip"
+    dest: "{{ lookup('env', 'OWASP_DIR') }}"
+    remote_src: yes
+
+- name: Configure OWASP rules
+  ansible.builtin.template:
+    src: templates/modsec_includes.conf.j2
+    dest: "{{ lookup('env', 'OWASP_DIR') }}/modsec_includes.conf"
+
+- name: Enable ModSecurity in LiteSpeed
+  ansible.builtin.lineinfile:
+    path: "{{ lookup('env', 'LSWS_DIR') }}/conf/httpd_config.conf"
+    line: "module mod_security { modsecurity on modsecurity_rules `SecRuleEngine On` modsecurity_rules_file {{ lookup('env', 'OWASP_DIR') }}/modsec_includes.conf }"
+    insertafter: "^module cache"
+  notify: restart litespeed

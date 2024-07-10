@@ -1,0 +1,78 @@
+- name: Mark the directory as safe for Git
+  ansible.builtin.shell: |
+    git config --global --add safe.directory /usr/local/lsws/localhost
+  become: true
+
+- name: Clone Bedrock repository with force
+  ansible.builtin.git:
+    repo: 'https://github.com/roots/bedrock.git'
+    dest: "{{ lookup('env', 'SITE_DOC_ROOT') }}"
+    version: master
+    force: true
+  become: true
+
+- name: Create wp folder inside web folder
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'SITE_DOC_ROOT') }}/web/wp"
+    state: directory
+
+- name: Install WP-CLI
+  ansible.builtin.shell: |
+    curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+    chmod +x wp-cli.phar
+    mv wp-cli.phar /usr/local/bin/wp
+  args:
+    creates: /usr/local/bin/wp
+
+- name: Download WordPress core files
+  ansible.builtin.shell: |
+    wp core download --path={{ lookup('env', 'SITE_DOC_ROOT') }}/web/wp --allow-root
+  args:
+    creates: "{{ lookup('env', 'SITE_DOC_ROOT') }}/web/wp/wp-admin"
+
+- name: Copy .env.example to .env
+  ansible.builtin.copy:
+    src: "{{ lookup('env', 'SITE_DOC_ROOT') }}/.env.example"
+    dest: "{{ lookup('env', 'SITE_DOC_ROOT') }}/.env"
+    remote_src: yes
+    force: no
+  become: true
+
+- name: Update Bedrock .env file for WP_HOME
+  ansible.builtin.lineinfile:
+    path: "{{ lookup('env', 'SITE_DOC_ROOT') }}/.env"
+    regexp: '^WP_HOME=.*'
+    line: "WP_HOME='http://localhost'"
+  notify: restart litespeed
+
+- name: Update Bedrock .env file for DATABASE_URL
+  ansible.builtin.lineinfile:
+    path: "{{ lookup('env', 'SITE_DOC_ROOT') }}/.env"
+    regexp: '^DATABASE_URL=.*'
+    line: "DATABASE_URL='{{ lookup('env', 'DATABASE_URL') }}'"
+  notify: restart litespeed
+
+- name: Install Composer
+  ansible.builtin.shell: |
+    curl -sS https://getcomposer.org/installer | php
+    mv composer.phar /usr/local/bin/composer
+  args:
+    creates: /usr/local/bin/composer
+
+- name: Install Bedrock dependencies with Composer
+  ansible.builtin.shell: |
+    composer install
+  args:
+    chdir: "{{ lookup('env', 'SITE_DOC_ROOT') }}"
+
+- name: Install WordPress
+  ansible.builtin.shell: |
+    wp core install --url=http://localhost --title="Localhost Site" --admin_user=admin --admin_password=admin_password --admin_email=admin@example.com --path={{ lookup('env', 'SITE_DOC_ROOT') }}/web/wp --allow-root
+  args:
+    chdir: "{{ lookup('env', 'SITE_DOC_ROOT') }}/web/wp"
+
+- name: Install and activate theme
+  ansible.builtin.shell: |
+    wp theme install twentytwentyfour --activate --path={{ lookup('env', 'SITE_DOC_ROOT') }}/web/wp --allow-root
+  args:
+    chdir: "{{ lookup('env', 'SITE_DOC_ROOT') }}/web/wp"

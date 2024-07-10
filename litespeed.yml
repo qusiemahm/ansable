@@ -5,15 +5,9 @@
     site:
       name: localhost
       domain: localhost
-      doc_root: /usr/local/lsws/localhost/web
-      content_src: /mnt/c/Users/khaled/OneDrive/Desktop/Softylus/ols-docker-env/sites/localhost
+      doc_root: /usr/local/lsws/localhost/
     mysql:
-      DATABASE_URL: 'mysql://mariadb:57KeyHV3TWZ9sUTYZufGBYnHHC2kPtSF4unLYn27T73udiyix0qf57Hk8CfUoqB4@135.181.200.123:5432/default'
-      DB_host: "135.181.200.123"
-      root_password: "HJ6Xn7btw0xL64Mrf1olwXm81nrrQukmLD9QjIokTXAd1583iSPgh5JYPegsPGFw"
-      database: "default"
-      user: "mariadb"
-      password: "57KeyHV3TWZ9sUTYZufGBYnHHC2kPtSF4unLYn27T73udiyix0qf57Hk8CfUoqB4"
+      DATABASE_URL: "mysql://{{ mysql_user }}:{{ mysql_password }}@{{ mysql_host }}:{{ mysql_port }}/{{ mysql_database }}"
     lsws_dir: /usr/local/lsws
     owasp_dir: "{{ lsws_dir }}/conf/owasp"
     owasp_version: "4.3.0"
@@ -27,7 +21,6 @@
         name:
           - openlitespeed
           - unzip
-          - mysql-server
           - git
         state: present
 
@@ -62,6 +55,8 @@
     - name: Ensure PHP 8.2 is set as the default
       ansible.builtin.shell: |
         ln -sf /usr/local/lsws/lsphp82/bin/php /usr/bin/php
+      args:
+        creates: /usr/bin/php
 
     - name: Mark the directory as safe for Git
       ansible.builtin.shell: |
@@ -76,49 +71,41 @@
         force: true
       become: true
 
+    - name: Create wp folder inside web folder
+      ansible.builtin.file:
+        path: "{{ site.doc_root }}web/wp"
+        state: directory
+
+    - name: Install WP-CLI
+      ansible.builtin.shell: |
+        curl -O https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar
+        chmod +x wp-cli.phar
+        mv wp-cli.phar /usr/local/bin/wp
+      args:
+        creates: /usr/local/bin/wp
+
+    - name: Download WordPress core files
+      ansible.builtin.shell: |
+        wp core download --path={{ site.doc_root }}web/wp --allow-root
+      args:
+        creates: "{{ site.doc_root }}web/wp/wp-admin"
+
     - name: Copy .env.example to .env
       ansible.builtin.copy:
         src: "{{ site.doc_root }}/.env.example"
         dest: "{{ site.doc_root }}/.env"
         remote_src: yes
+        force: no
       become: true
 
-    - name: Update Bedrock .env file
-      ansible.builtin.lineinfile:
-        path: "{{ site.doc_root }}/.env"
-        regexp: '^DB_NAME=.*'
-        line: "DB_NAME='{{ mysql.database }}'"
-      notify: restart litespeed
-
-    - name: Update Bedrock .env file
-      ansible.builtin.lineinfile:
-        path: "{{ site.doc_root }}/.env"
-        regexp: '^DB_USER=.*'
-        line: "DB_USER='{{ mysql.user }}'"
-      notify: restart litespeed
-
-    - name: Update Bedrock .env file
-      ansible.builtin.lineinfile:
-        path: "{{ site.doc_root }}/.env"
-        regexp: '^DB_PASSWORD=.*'
-        line: "DB_PASSWORD='{{ mysql.password }}'"
-      notify: restart litespeed
-
-    - name: Update Bedrock .env file
+    - name: Update Bedrock .env file for WP_HOME
       ansible.builtin.lineinfile:
         path: "{{ site.doc_root }}/.env"
         regexp: '^WP_HOME=.*'
         line: "WP_HOME='http://localhost'"
       notify: restart litespeed
 
-    - name: Update Bedrock .env file
-      ansible.builtin.lineinfile:
-        path: "{{ site.doc_root }}/.env"
-        regexp: '^DB_HOST=.*'
-        line: "DB_HOST='{{ mysql.DB_host }}'"
-      notify: restart litespeed
-
-    - name: Update Bedrock .env file
+    - name: Update Bedrock .env file for DATABASE_URL
       ansible.builtin.lineinfile:
         path: "{{ site.doc_root }}/.env"
         regexp: '^DATABASE_URL=.*'
@@ -129,6 +116,8 @@
       ansible.builtin.shell: |
         curl -sS https://getcomposer.org/installer | php
         mv composer.phar /usr/local/bin/composer
+      args:
+        creates: /usr/local/bin/composer
 
     - name: Install Bedrock dependencies with Composer
       ansible.builtin.shell: |
@@ -159,37 +148,63 @@
               configFile               conf/vhosts/localhost/vhconf.conf
           }
 
-    # - name: Ensure MySQL is started
-    #   ansible.builtin.service:
-    #     name: mysql
-    #     state: started
-    #     enabled: yes
+    - name: Create localhost vhost directory
+      ansible.builtin.file:
+        path: "{{ lsws_dir }}/conf/vhosts/localhost"
+        state: directory
 
-    # - name: Create MySQL configuration file for root
+    # - name: Create localhost vhost configuration file
+      ansible.builtin.copy:
+        dest: "{{ lsws_dir }}/conf/vhosts/localhost/vhconf.conf"
+        content: |
+          docRoot                   $VH_ROOT/
+          vhDomain                  localhost
+          adminEmails               root@localhost
+          enableGzip                1
+          index  {
+            useServer               0
+            indexFiles              index.php, index.html
+          }
+
+          scripthandler  {
+            add                     lsapi:lsphp82 php
+          }
+
+          extprocessor lsphp82 {
+            type                    lsapi
+            address                 uds://tmp/lshttpd/lsphp.sock
+            maxConns                35
+            env                     PHP_LSAPI_CHILDREN=35
+            initTimeout             60
+            retryTimeout            0
+            persistConn             1
+            respBuffer              0
+            autoStart               1
+            path                    /usr/local/lsws/lsphp82/bin/lsphp
+            extUser                 nobody
+            extGroup                nogroup
+            memSoftLimit            2047M
+            memHardLimit            2047M
+            procSoftLimit           400
+            procHardLimit           500
+          }
+
+          module cache {
+            storagePath /usr/local/lsws/cachedata/$vh_name
+          }
+
+    # - name: Create index.php in the document root
     #   ansible.builtin.copy:
-    #     dest: /root/.my.cnf
+    #     dest: "{{ site.doc_root }}web/index.php"
     #     content: |
-    #       [client]
-    #       user=root
-    #       password={{ mysql.root_password }}
-    #     mode: '0600'
-    #   when: mysql.root_password is defined
+    #       <?php
+    #       echo "Hello, LiteSpeed!";
 
-    # - name: Create MySQL database
-    #   community.mysql.mysql_db:
-    #     name: "{{ mysql.database }}"
-    #     state: present
-    #     login_user: root
-    #     login_password: "{{ mysql.root_password }}"
-
-    # - name: Create MySQL user
-    #   community.mysql.mysql_user:
-    #     name: "{{ mysql.user }}"
-    #     password: "{{ mysql.password }}"
-    #     priv: "{{ mysql.database }}.*:ALL"
-    #     state: present
-    #     login_user: root
-    #     login_password: "{{ mysql.root_password }}"
+    - name: Create a PHP info file for testing
+      ansible.builtin.copy:
+        dest: "{{ site.doc_root }}web/info.php"
+        content: |
+          <?php phpinfo();
 
     - name: Set up OWASP ModSecurity rules
       block:
@@ -225,6 +240,24 @@
         name: "Renew Let's Encrypt SSL certificates"
         job: "{{ lsws_dir }}/admin/misc/letsencrypt.sh {{ site.domain }} --renew"
         special_time: daily
+
+    - name: Install and activate theme
+      ansible.builtin.shell: |
+        wp theme install twentytwentyfour --activate --path={{ site.doc_root }}web/wp --allow-root
+      args:
+        chdir: "{{ site.doc_root }}web/wp"
+
+    - name: Gather LiteSpeed error logs
+      ansible.builtin.fetch:
+        src: "{{ lsws_dir }}/logs/error.log"
+        dest: "/mnt/c/Users/khaled/OneDrive/Desktop/Softylus/ansable/logs/error.log"
+        flat: yes
+
+    - name: Gather LiteSpeed access logs
+      ansible.builtin.fetch:
+        src: "{{ lsws_dir }}/logs/access.log"
+        dest: "/mnt/c/Users/khaled/OneDrive/Desktop/Softylus/ansable/logs/access.log"
+        flat: yes
 
     - name: Restart LiteSpeed
       ansible.builtin.service:

@@ -17,6 +17,7 @@ RUN rm -rf /var/www/vhosts/localhost && \
 
 # Copy .env file from host to container
 COPY .env /var/www/vhosts/localhost/.env
+COPY .env /var/www/vhosts/localhost/.env1
 
 # Set working directory
 WORKDIR /var/www/vhosts/localhost
